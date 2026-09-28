@@ -1,0 +1,48 @@
+<!-- Slice House connector consent page (plan-d3-connector.md). Static because Supabase serves function/storage HTML as text/plain on the free plan.
+     Source of truth: report/consent/index.html in the private repo; published to the site repo at /oauth/consent/ by report/publish.sh. The key below is the public publishable key. -->
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Slice House data — sign in</title>
+<style>
+  :root{color-scheme:light dark;font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif}
+  body{margin:0;padding:24px 16px;display:flex;justify-content:center;background:#f6f6f4}
+  @media(prefers-color-scheme:dark){body{background:#111}}
+  main{max-width:420px;width:100%}
+  h1{font-size:20px;margin:0 0 8px}p{line-height:1.45;margin:8px 0}
+  input,button{font:inherit;width:100%;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #bbb;margin-top:8px}
+  button{background:#1a1a1a;color:#fff;border-color:#1a1a1a;cursor:pointer}button.secondary{background:transparent;color:inherit}
+  .muted{opacity:.7;font-size:14px}.err{color:#b00020}
+</style></head><body><main id="app"><p class="muted">Loading…</p></main>
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+const sb = createClient("https://aihofwwrbrigbxztcmeb.supabase.co", "sb_publishable__b1HLuwMsuEU7-KeJwqQmg_2-TmQjev", { auth: { flowType: "implicit", detectSessionInUrl: true, persistSession: true } });
+const app = document.getElementById("app");
+const q = new URLSearchParams(location.search);
+if (q.get("authorization_id")) localStorage.setItem("sh_authorization_id", q.get("authorization_id"));
+const authId = localStorage.getItem("sh_authorization_id");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function view(html) { app.innerHTML = html; }
+async function main() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!authId) return view('<h1>Slice House data</h1><p>Nothing to approve. Start from Claude: Customize → Connectors → Connect.</p>' + (session ? '<p class="muted">Signed in as ' + esc(session.user.email) + '.</p>' : ''));
+  if (!session) {
+    view('<h1>Sign in to Slice House data</h1><p>Enter your Slice House email. We will send a one-time sign-in link.</p><form id="f"><input type="email" id="email" placeholder="you@slicehouse.com" required autocomplete="email"><button type="submit">Send sign-in link</button></form><p id="msg" class="muted"></p>');
+    document.getElementById("f").onsubmit = async (e) => {
+      e.preventDefault(); const email = document.getElementById("email").value.trim(); const msg = document.getElementById("msg");
+      msg.textContent = "Sending…";
+      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname, shouldCreateUser: false } });
+      msg.innerHTML = error ? '<span class="err">' + esc(error.message) + '</span>' : "Check your email and open the link on this device. This page will continue automatically.";
+    };
+    return;
+  }
+  const { data, error } = await sb.auth.oauth.getAuthorizationDetails(authId);
+  if (error || !data) { localStorage.removeItem("sh_authorization_id"); return view('<h1>Request expired</h1><p class="err">' + esc(error?.message ?? "Unknown authorization") + '</p><p>Go back to Claude and click Connect again.</p>'); }
+  const client = data.client ?? {}; const scopes = (data.scope ?? "").split(" ").filter(Boolean);
+  view('<h1>Allow access?</h1><p><b>' + esc(client.name ?? "An app") + '</b> wants to read Slice House brand-health data as <b>' + esc(session.user.email) + '</b>.</p>' +
+       '<p class="muted">Read-only: weekly sales, guests, channels, labor aggregates, weather, holidays and reviews. No employee or customer data exists in this warehouse.' + (scopes.length ? ' Scopes: ' + esc(scopes.join(", ")) + '.' : '') + '</p>' +
+       '<button id="ok">Allow</button><button id="no" class="secondary">Deny</button><p id="msg" class="muted"></p>');
+  const go = async (fn) => { const msg = document.getElementById("msg"); msg.textContent = "One moment…"; const { data: r, error: e2 } = await fn(); if (e2) { msg.innerHTML = '<span class="err">' + esc(e2.message) + '</span>'; return; } localStorage.removeItem("sh_authorization_id"); const to = r?.redirect_to ?? r?.redirectTo ?? r?.url; if (to) location.href = to; else msg.textContent = "Done. You can return to Claude."; };
+  document.getElementById("ok").onclick = () => go(() => sb.auth.oauth.approveAuthorization(authId));
+  document.getElementById("no").onclick = () => go(() => sb.auth.oauth.denyAuthorization(authId));
+}
+main().catch((e) => view('<p class="err">' + esc(e.message) + '</p>'));
+</script></body></html>
